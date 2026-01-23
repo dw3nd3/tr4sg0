@@ -22,7 +22,7 @@ def serialize(room):
         for key, value in dictionary.items():
             output += "MAP" + "{:02x}".format(loc) + key + brackets(value)
     for key, value in room.rules.items():
-        output += "RUL" + key
+        output += "RUL" + key + " "
         for rule_case in value:
             output += ";".join([",".join(antecedent) for antecedent in rule_case.antecedents])
             output += ":"

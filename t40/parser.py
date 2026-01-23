@@ -4,9 +4,24 @@
 # provided under public domain by Eli Bendersky
 import re
 import logging
+from enum import Enum
 
 from .util import rle_decompress
 from .model import Room, RuleCase, Command
+from .plugin import manager as plugin_manager
+
+class TokenType(Enum):
+    COLOR = "COLOR"
+    DIRECTIVE = "DIRECTIVE"
+    STRING = "STRING"
+    BYTE = "BYTE"
+    VARID = "VARID"
+    EMPTYTOK = "EMPTYTOK"
+    COMMA = "COMMA"
+    SEMICOLON = "SEMICOLON"
+    COLON = "COLON"
+    CHARACTER = "CHARACTER"
+    EOF = "EOF"
 
 class Token(object):
     def __init__(self, type, val):
@@ -69,22 +84,23 @@ class Lexer(object):
 
 
 def parse(text):
-
+    for callback in plugin_manager.plugin_before_parse_callbacks:
+        text = callback(text)
     regexdict = {
         regid: re.compile(regex)
         for regid, regex in
         [
-            ("COLOR", r"[0-9a-fA-F]{6}"),
-            ("VARID", r"[a-z_][a-z0-9_-][a-z0-9_-]+"),
-            ("EMPTYTOK", r"_"),
-            ("BYTE", r"[0-9a-fA-F]{2}"),
-            ("DIRECTIVE", r"[A-Z]{3}"),
-            ("STRING", r"\[([^]]*)\]"),
-            ("COMMA", r","),
-            ("SEMICOLON", r";"),
-            ("COLON", r":"),
-            ("CHARACTER", r"."),
-            ("EOF", r"D33-END"),
+            (TokenType.COLOR, r"[0-9a-fA-F]{6}"),
+            (TokenType.VARID, r"[a-z_][a-z0-9_-][a-z0-9_-]+"),
+            (TokenType.EMPTYTOK, r"_"),
+            (TokenType.BYTE, r"[0-9a-fA-F]{2}"),
+            (TokenType.DIRECTIVE, r"[A-Z]{3}"),
+            (TokenType.STRING, r"\[([^]]*)\]"),
+            (TokenType.COMMA, r","),
+            (TokenType.SEMICOLON, r";"),
+            (TokenType.COLON, r":"),
+            (TokenType.CHARACTER, r"."),
+            (TokenType.EOF, r"D33-END"),
         ]
     }
     lx = Lexer(regexdict, skip_whitespace=True)
@@ -101,67 +117,74 @@ def parse(text):
     try:
         finish = False
         while not finish:
-            directive = lx.token("DIRECTIVE", "EOF")
+            directive = lx.token(TokenType.DIRECTIVE, TokenType.EOF)
             match directive.val:
                 case "PAL":
                     room.palette = [
-                        lx.token("COLOR", "EOF").val,
-                        lx.token("COLOR", "EOF").val,
-                        lx.token("COLOR", "EOF").val,
-                        lx.token("COLOR", "EOF").val,
+                        lx.token(TokenType.COLOR, TokenType.EOF).val,
+                        lx.token(TokenType.COLOR, TokenType.EOF).val,
+                        lx.token(TokenType.COLOR, TokenType.EOF).val,
+                        lx.token(TokenType.COLOR, TokenType.EOF).val,
                     ]
                 case "LAY":
-                    next_ = lx.token("STRING", "CHARACTER")
-                    if next_.type == "STRING":
-                        room.layout = rle_decompress(next_.val)
+                    next_ = lx.token(TokenType.STRING, TokenType.CHARACTER)
+                    if next_.type == TokenType.STRING:
+                        layout = rle_decompress(next_.val)
+                        assert len(layout) == 16 * 16, "Layout must have size 256, but found %s" % len(layout)
+                        room.layout = layout
                     else:
                         room.layout = next_.val + "".join(
-                            lx.token("CHARACTER").val for _ in range(16 * 16 - 1)
+                            lx.token(TokenType.CHARACTER).val for _ in range(16 * 16 - 1)
                         )
 
                 case "SPR":
-                    key = lx.token("VARID")
-                    next_ = lx.token("STRING", "CHARACTER")
-                    if next_.type == "STRING":
-                        room.sprites[key.val] = rle_decompress(next_.val)
+                    key = lx.token(TokenType.VARID)
+                    next_ = lx.token(TokenType.STRING, TokenType.CHARACTER)
+                    if next_.type == TokenType.STRING:
+                        sprite = rle_decompress(next_.val)
+                        assert len(sprite) == 8 * 8, "Sprites must have size 64, but %s is %s" % (key.val, len(sprite))
+                        room.sprites[key.val] = sprite
                     else:
                         room.sprites[key.val] = next_.val + "".join(
-                            lx.token("CHARACTER").val for _ in range(8 * 8 - 1)
+                            lx.token(TokenType.CHARACTER).val for _ in range(8 * 8 - 1)
                         )
 
                 case "MAP":
-                    loc = lx.token("BYTE", "CHARACTER")
-                    key = lx.token("VARID")
-                    value = lx.token("STRING")
-                    if loc.type == "BYTE":
+                    loc = lx.token(TokenType.BYTE, TokenType.CHARACTER)
+                    key = lx.token(TokenType.VARID)
+                    value = lx.token(TokenType.STRING)
+                    if loc.type == TokenType.BYTE:
                         room.idxmap[int(loc.val, 16)][key.val] = value.val
                     else:
                         room.charmap[loc.val][key.val] = value.val
 
                 case "RUL":
-                    antecedent = []
+                    key = lx.token(TokenType.VARID)
+                    antecedent = [set([lx.token(TokenType.VARID, TokenType.EMPTYTOK).val])]
                     consequent = []
-                    key = lx.token("VARID")
                     while True:
-                        token = lx.token("VARID", "EMPTYTOK", "COMMA", "SEMICOLON", "COLON")
+                        token = lx.token(TokenType.VARID, TokenType.EMPTYTOK, TokenType.COMMA, TokenType.SEMICOLON, TokenType.COLON)
                         match token.type:
-                            case "VARID"|"EMPTYTOK": antecedent.append(token.val)
-                            case "COMMA": pass
-                            case "SEMICOLON": 
-                                rule_case.antecedents.append(antecedent)
-                                antecedent = []
-                            case "COLON": break
+                            case TokenType.VARID|TokenType.EMPTYTOK: antecedent[-1].add(token.val)
+                            case TokenType.COMMA: pass
+                            case TokenType.SEMICOLON: antecedent.append(set(lx.token(TokenType.VARID, TokenType.EMPTYTOK).val))
+                            case TokenType.COLON: break
                     while True:
                         if re.match(r'[A-Z]', lx.peek_first_char()):
                             break
-                        consequent.append(Command(lx.token("VARID").val, lx.token("STRING").val))
+                        consequent.append(Command(lx.token(TokenType.VARID).val, lx.token(TokenType.STRING).val))
                     ruleset = room.rules.get(key.val, [])
                     ruleset.append(RuleCase(antecedent, consequent))
                     room.rules[key.val] = ruleset
 
                 case "D33-END":
                     finish = True
+                
+                case _:
+                    try_user_directive(directive.val, lx)
 
+        for callback in plugin_manager.plugin_after_parse_callbacks:
+            room = callback(room)
         return room
     
     except LexerError as err:
@@ -169,3 +192,9 @@ def parse(text):
         logging.error("  %s" % err.extra)
         logging.error("  Expected %s" % " or ".join(err.expected))
 
+def try_user_directive(directive, lx):
+    user_directive = plugin_manager.plugin_directives.get(directive)
+    if user_directive:
+        user_directive(lx)
+    else:
+        logging.error("Unknown directive %s" % directive)
