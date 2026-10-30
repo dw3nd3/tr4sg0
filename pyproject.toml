@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tr4sg0"
+version = "0.1.0"
+description = "Extensible implementation of a d33 browser"
+readme = "README.md"
+license = { text = "GPLv3" }
+requires-python = ">=3.10"
+authors = [{ name = "MiguelMJ" }]
+keywords = ["browser", "d33", "pygame"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "License :: OSI Approved :: GPLv3 License",
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pygame-ce",
+]
+
+[project.urls]
+Homepage = "https://github.com/dw3nd3/tr4sg0"
+Repository = "https://github.com/dw3nd3/tr4sg0"
+Issues = "https://github.com/dw3nd3/tr4sg0/issues"
+Specification = "https://github.com/dw3nd3/d33-specification/wiki"
+
+[project.scripts]
+t40 = "t40.main:run"
+
+[tool.setuptools.packages.find]
+include = ["t40*"]
+
+[tool.setuptools.package-data]
+t40 = ['icon.png', 'config.ini']
