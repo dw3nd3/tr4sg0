@@ -4,15 +4,18 @@ from dataclasses import dataclass
 from .util import pos2idx, idx2pos, is_valid_pos, rle_decompress, nc
 from . import state
 
+
 @dataclass
 class Command:
     varid: str
     arg: str
 
+
 @dataclass
 class RuleCase:
     antecedents: list[set[str]]
     consequent: list[Command]
+
 
 @dataclass
 class Room:
@@ -30,16 +33,21 @@ class Room:
     @property
     def layout(self):
         return self._layout
-    
+
     @layout.setter
     def layout(self, value):
         self._layout = value
         self.process_start()
 
+    @property
+    def layout_with_avatar(self):
+        idx = pos2idx(*self.start)
+        return self._layout[:idx] + "@" + self._layout[idx + 1 :]
+
     def process_start(self):
         self.start = idx2pos(self._layout.index("@")) if "@" in self._layout else 0
         self._layout = self._layout.replace("@", ".")
-        
+
     def _get_tile_value(self, row, col, key):
         if not is_valid_pos(row, col):
             return
@@ -47,11 +55,13 @@ class Room:
         value = self.idxmap[idx].get(key)
         if value is None:
             char = self.layout[idx]
-            value = self.charmap.get(char,{}).get(key)
+            value = self.charmap.get(char, {}).get(key)
         return value
-    
+
     def is_solid(self, row, col):
-        return not is_valid_pos(row, col) or self._get_tile_value(row, col, "wall") == "1"
+        return (
+            not is_valid_pos(row, col) or self._get_tile_value(row, col, "wall") == "1"
+        )
 
     def sprite(self, row, col):
         return self._get_tile_value(row, col, "sprite")
@@ -65,9 +75,9 @@ class Room:
             for rule_case in ruleset:
                 if any(a.issubset(inventory) for a in rule_case.antecedents):
                     return rule_case.consequent
-    
+
     def color(self, char):
-        return self.palette[ord(char) - ord('a')]
+        return self.palette[ord(char) - ord("a")]
 
     @classmethod
     def default(cls):
@@ -80,7 +90,7 @@ class Room:
                 "sign": rle_decompress("9a6d2a1d4c1d2a6d9a3b2a6b2a6b2a3b"),
                 "chest": rle_decompress("1b6a1b1a6d2a6d4a2c4a2d2c2d2a6d2a6d1a1b6a1b"),
                 "door": "aaaaaaaaaccccccaacddddcaacddddcaacddddcaacddddcaacbbbbcabbbbbbbb",
-                "avatar": "bbaaabbbbbabbabbbbabbbabbbabbbbabbabbbbabbabbbabbbabbabbbbaaabbb"
+                "avatar": "bbaaabbbbbabbabbbbabbbabbbabbbbabbabbbbabbabbbabbbabbabbbbaaabbb",
             },
             rules={},
             charmap={
@@ -90,5 +100,16 @@ class Room:
                 "O": {"sprite": "chest", "wall": "1"},
                 "E": {"sprite": "door", "wall": "1"},
             },
-            idxmap=[{} for _ in range(16 * 16)]
+            idxmap=[{} for _ in range(16 * 16)],
+        )
+
+    @classmethod
+    def empty(cls):
+        return cls(
+            _layout="",
+            palette=tuple(),
+            sprites={},
+            rules={},
+            charmap={},
+            idxmap=[{} for _ in range(16 * 16)],
         )
