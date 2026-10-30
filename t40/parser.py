@@ -1,4 +1,3 @@
-
 # The following code is a heavily modified version of the
 # code from https://gist.github.com/eliben/5797351
 # provided under public domain by Eli Bendersky
@@ -9,6 +8,8 @@ from enum import Enum
 from .util import rle_decompress
 from .model import Room, RuleCase, Command
 from .plugin import manager as plugin_manager
+from . import state
+
 
 class TokenType(Enum):
     COLOR = "COLOR"
@@ -23,6 +24,7 @@ class TokenType(Enum):
     CHARACTER = "CHARACTER"
     EOF = "EOF"
 
+
 class Token(object):
     def __init__(self, type, val):
         self.type = type
@@ -30,6 +32,7 @@ class Token(object):
 
     def __repr__(self):
         return "%s(%s)" % (self.type, self.val)
+
 
 class LexerError(Exception):
     def __init__(self, pos, expected=None, extra=None):
@@ -76,7 +79,7 @@ class Lexer(object):
                     return tok
 
             raise LexerError(self.pos, expected, "Last token: %s" % self.last_token)
-    
+
     def peek_first_char(self):
         if self.pos >= len(self.buf):
             return None
@@ -86,10 +89,10 @@ class Lexer(object):
 def parse(text):
     for callback in plugin_manager.plugin_before_parse_callbacks:
         text = callback(text)
+    start_token = "D33-ROOM"
     regexdict = {
         regid: re.compile(regex)
-        for regid, regex in
-        [
+        for regid, regex in [
             (TokenType.COLOR, r"[0-9a-fA-F]{6}"),
             (TokenType.VARID, r"[a-z_][a-z0-9_-][a-z0-9_-]+"),
             (TokenType.EMPTYTOK, r"_"),
@@ -106,13 +109,13 @@ def parse(text):
     lx = Lexer(regexdict, skip_whitespace=True)
 
     try:
-        start = text.index("D33-ROOM")
+        start = text.index(start_token)
     except ValueError:
         logging.error("No D33-ROOM found")
         return None
 
-    room = Room.default()
-    lx.input(text, start+8)
+    room = state.base_room_generator()
+    lx.input(text, start + len(start_token))
 
     try:
         finish = False
@@ -130,11 +133,14 @@ def parse(text):
                     next_ = lx.token(TokenType.STRING, TokenType.CHARACTER)
                     if next_.type == TokenType.STRING:
                         layout = rle_decompress(next_.val)
-                        assert len(layout) == 16 * 16, "Layout must have size 256, but found %s" % len(layout)
+                        assert (
+                            len(layout) == 16 * 16
+                        ), "Layout must have size 256, but found %s" % len(layout)
                         room.layout = layout
                     else:
                         room.layout = next_.val + "".join(
-                            lx.token(TokenType.CHARACTER).val for _ in range(16 * 16 - 1)
+                            lx.token(TokenType.CHARACTER).val
+                            for _ in range(16 * 16 - 1)
                         )
 
                 case "SPR":
@@ -142,7 +148,12 @@ def parse(text):
                     next_ = lx.token(TokenType.STRING, TokenType.CHARACTER)
                     if next_.type == TokenType.STRING:
                         sprite = rle_decompress(next_.val)
-                        assert len(sprite) == 8 * 8, "Sprites must have size 64, but %s is %s" % (key.val, len(sprite))
+                        assert (
+                            len(sprite) == 8 * 8
+                        ), "Sprites must have size 64, but %s is %s" % (
+                            key.val,
+                            len(sprite),
+                        )
                         room.sprites[key.val] = sprite
                     else:
                         room.sprites[key.val] = next_.val + "".join(
@@ -156,41 +167,69 @@ def parse(text):
                     if loc.type == TokenType.BYTE:
                         room.idxmap[int(loc.val, 16)][key.val] = value.val
                     else:
+                        if loc.val not in room.charmap:
+                            room.charmap[loc.val] = {}
                         room.charmap[loc.val][key.val] = value.val
 
                 case "RUL":
                     key = lx.token(TokenType.VARID)
-                    antecedent = [set([lx.token(TokenType.VARID, TokenType.EMPTYTOK).val])]
+                    antecedent = [
+                        set([lx.token(TokenType.VARID, TokenType.EMPTYTOK).val])
+                    ]
                     consequent = []
                     while True:
-                        token = lx.token(TokenType.VARID, TokenType.EMPTYTOK, TokenType.COMMA, TokenType.SEMICOLON, TokenType.COLON)
+                        token = lx.token(
+                            TokenType.VARID,
+                            TokenType.EMPTYTOK,
+                            TokenType.COMMA,
+                            TokenType.SEMICOLON,
+                            TokenType.COLON,
+                        )
                         match token.type:
-                            case TokenType.VARID|TokenType.EMPTYTOK: antecedent[-1].add(token.val)
-                            case TokenType.COMMA: pass
-                            case TokenType.SEMICOLON: antecedent.append(set(lx.token(TokenType.VARID, TokenType.EMPTYTOK).val))
-                            case TokenType.COLON: break
+                            case TokenType.VARID | TokenType.EMPTYTOK:
+                                antecedent[-1].add(token.val)
+                            case TokenType.COMMA:
+                                pass
+                            case TokenType.SEMICOLON:
+                                antecedent.append(
+                                    set(
+                                        lx.token(
+                                            TokenType.VARID, TokenType.EMPTYTOK
+                                        ).val
+                                    )
+                                )
+                            case TokenType.COLON:
+                                break
                     while True:
-                        if re.match(r'[A-Z]', lx.peek_first_char()):
+                        if re.match(r"[A-Z]", lx.peek_first_char()):
                             break
-                        consequent.append(Command(lx.token(TokenType.VARID).val, lx.token(TokenType.STRING).val))
+                        consequent.append(
+                            Command(
+                                lx.token(TokenType.VARID).val,
+                                lx.token(TokenType.STRING).val,
+                            )
+                        )
                     ruleset = room.rules.get(key.val, [])
                     ruleset.append(RuleCase(antecedent, consequent))
                     room.rules[key.val] = ruleset
 
                 case "D33-END":
                     finish = True
-                
+
                 case _:
                     try_user_directive(directive.val, lx)
 
         for callback in plugin_manager.plugin_after_parse_callbacks:
             room = callback(room)
         return room
-    
+
     except LexerError as err:
-        logging.error("LexerError at position %s: %s" % (err.pos, text[err.pos:err.pos+10]))
+        logging.error(
+            "LexerError at position %s: %s" % (err.pos, text[err.pos : err.pos + 10])
+        )
         logging.error("  %s" % err.extra)
-        logging.error("  Expected %s" % " or ".join(err.expected))
+        logging.error("  Expected %s" % " or ".join(str(e) for e in err.expected))
+
 
 def try_user_directive(directive, lx):
     user_directive = plugin_manager.plugin_directives.get(directive)
